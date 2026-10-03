@@ -1,0 +1,49 @@
+rules_version = '2';
+// Al-Sobh ASP DSS – Firestore security rules
+// Clinicians (anonymous sign-in) can only create their own records and update their feedback fields.
+// Only the owner accounts below can read the log and write the ASP review fields. Nothing can be deleted from the app.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() in [
+             'anaji@alsobh.com'        // add more owner emails here, lowercase
+           ];
+    }
+
+    match /dss_logs/{logId} {
+      allow read: if isOwner();
+
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.id == logId
+        && request.resource.data.keys().hasOnly([
+             'id','ts','date','empId','name','dept','role',
+             'syndrome','module','setting','severity','preg','mdr','mrsa','pseudo','allergy',
+             'aspUnit','riskFactors','pathwayId','match','safetyStop','anaphylaxisPath','recommended','alternative',
+             'status','purpose','prescribed','reason','otherRegimen','review72','rating','comment',
+             'submittedAt','updatedAt','version','uid'])
+        && request.resource.data.empId is string
+        && request.resource.data.empId.size() <= 15;
+
+      // ASP owner review: only the review fields, only by owner accounts
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'aspStatus','aspReviewedAt','aspTurnaroundH','aspTimeliness','aspReviewType','aspTherapyType',
+             'aspDiagnosis','aspOutcome','aspAction','aspNote','aspReviewedBy','aspUpdatedAt','aspUnitFinal'])
+        && (!('aspNote' in request.resource.data) || request.resource.data.aspNote.size() <= 2000);
+
+      // Clinician answer: only their own record, only the feedback fields
+      allow update: if request.auth != null
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'status','purpose','prescribed','reason','otherRegimen','review72','rating','comment',
+             'submittedAt','updatedAt'])
+        && (!('comment' in request.resource.data) || request.resource.data.comment.size() <= 1500);
+
+      allow delete: if false;
+    }
+  }
+}
